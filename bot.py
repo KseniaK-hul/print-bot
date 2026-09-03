@@ -18,11 +18,11 @@ ADMIN_ID = 6592882382
 MAX_FILE_SIZE_MB = 50
 MIN_FILE_SIZE_KB = 10
 
-# Состояния (Добавлены SET_BROCHURE_COUNT, SETUP_BROCHURE, SETUP_BROCHURE_TYPE)
+# Состояния (ИСПРАВЛЕНО: Теперь ровно 19, соответствует range(19))
 (AUTH, WAIT_FILE, FORMAT, SIDED, ADD_FILE, FOLDING, FOLDING_SELECT, 
  READY_TIME, CONFIRM, WAIT_OPERATOR, PRINT_COPIES, STRING_COPIES, 
  PRINT_MODE, INPUT_PAGES, COLOR_MODE, INPUT_COLOR_PAGES, 
- SET_BROCHURE_COUNT, SETUP_BROCHURE, SETUP_BROCHURE_TYPE) = range(21)
+ SET_BROCHURE_COUNT, SETUP_BROCHURE, SETUP_BROCHURE_TYPE) = range(19)
 
 # Цены
 PRICES_COLOR = {'A4': 60, 'A3': 140, 'A2': 300, 'A1': 500, 'A0': 1000}
@@ -225,7 +225,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка в handle_file: {e}")
         await update.message.reply_text("❌ Произошла ошибка при обработке файла. Попробуйте отправить другой файл или нажмите /start.")
         return ConversationHandler.END
-
 
 async def print_mode_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -452,7 +451,6 @@ async def folding_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             current_order['folding'] = True
             context.user_data['selected_folding'] = []
             
-            # Собираем индексы файлов, которые находятся в брошюрах
             broshure_files_idx = []
             for project in current_order.get('projects', []):
                 broshure_files_idx.extend(project['files'])
@@ -584,14 +582,14 @@ async def print_copies_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             await update.message.reply_text("✅ Копии заданы!")
             
-            # НОВОЕ: Спрашиваем количество брошюр
+            # Спрашиваем количество брошюр
             await update.message.reply_text("📚 Сколько брошюр нужно сшить? (Введите цифру, если не нужно - 0)")
             return SET_BROCHURE_COUNT
     except Exception as e:
         logger.error(f"Ошибка в print_copies_handler: {e}")
         return CONFIRM
 
-# --- НОВАЯ ЛОГИКА БРОШЮРОВКИ (ПОСЛЕ КОПИЙ) ---
+# --- ЛОГИКА БРОШЮРОВКИ (ПОСЛЕ КОПИЙ) ---
 async def set_brochure_count_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -730,7 +728,7 @@ async def brochure_type_handler(update: Update, context: ContextTypes.DEFAULT_TY
         }
         current_order['projects'].append(project)
         
-        # УДАЛЕНО: Автоматическое добавление чертежей в складывание (теперь они не складываются, если в брошюре)
+        # Убрано автодобавление чертежей в складывание
         context.user_data['temp_project_files'] = []
         context.user_data['temp_project_type'] = None
         
