@@ -7,7 +7,6 @@ from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
-# Настройки логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # !!! ВСТАВЬТЕ ВАШ НОВЫЙ ТОКЕН (после Revoke) !!!
@@ -17,13 +16,11 @@ ADMIN_ID = 6592882382
 MAX_FILE_SIZE_MB = 50
 MIN_FILE_SIZE_KB = 10
 
-# Состояния бота
 (AUTH, WAIT_FILE, FORMAT, SIDED, ADD_FILE, BROCHURE, 
  BROCHURE_COUNT, BROCHURE_SETUP, BROCHURE_TYPE, FOLDING, FOLDING_SELECT, 
  READY_TIME, CONFIRM, WAIT_OPERATOR, PRINT_COPIES, STRING_COPIES, 
  PRINT_MODE, INPUT_PAGES, COLOR_MODE, INPUT_COLOR_PAGES) = range(20)
 
-# Цены
 PRICES_COLOR = {'A4': 60, 'A3': 140, 'A2': 300, 'A1': 500, 'A0': 1000}
 PRICES_BW = {'A4': 18, 'A3': 60, 'A2': 200, 'A1': 300, 'A0': 600}
 FOLDING_PRICES = {'A0': 100, 'A1': 50, 'A2': 30, 'A3': 10}
@@ -91,7 +88,6 @@ async def auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Авторизация успешна!\nТеперь отправьте файл для печати (PDF):")
     return WAIT_FILE
 
-# --- ОБРАБОТКА ФАЙЛА ---
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     document = update.message.document
@@ -715,7 +711,6 @@ async def confirm_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Заказ отменен. Для создания нового заказа нажмите /start")
         return ConversationHandler.END
 
-# --- ОТПРАВКА АДМИНУ ---
 async def send_order_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, order: dict):
     total_sum = order['total_price']
     
@@ -785,7 +780,6 @@ async def send_order_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
             if file_data.get('path'): os.remove(file_data['path'])
         except: pass
 
-# --- ОТЗЫВЫ ---
 async def issue_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -853,7 +847,6 @@ async def admin_cancel_reason(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка при отправке уведомления клиенту: {e}")
 
-# --- ОПЕРАТОР ---
 async def unsupported_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if update.message.text.startswith('/'): return ConversationHandler.END
@@ -951,8 +944,52 @@ async def send_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Нет прав.")
 
-# --- ЗАПУСК БОТА (АДАПТИРОВАН ДЛЯ RENDER) ---
-# Создаем Flask-приложение, чтобы Render видел открытый порт
+# --- ФУНКЦИЯ ЗАПУСКА БОТА ---
+def run_bot():
+    application = Application.builder().token(TOKEN).build()
+    
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            AUTH: [MessageHandler(filters.TEXT & ~filters.COMMAND, auth)],
+            WAIT_FILE: [MessageHandler(filters.Document.PDF, handle_file)],
+            PRINT_MODE: [CallbackQueryHandler(print_mode_choice, pattern="^print_")],
+            INPUT_PAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_pages_handler)],
+            COLOR_MODE: [CallbackQueryHandler(color_mode_choice, pattern="^color_mode_")],
+            INPUT_COLOR_PAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_color_pages_handler)],
+            FORMAT: [CallbackQueryHandler(format_choice, pattern="^format_")],
+            SIDED: [CallbackQueryHandler(sided_choice, pattern="^sided_")],
+            ADD_FILE: [CallbackQueryHandler(add_file_choice, pattern="^add_")],
+            BROCHURE: [CallbackQueryHandler(brochure_choice, pattern="^brochure_")],
+            BROCHURE_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, brochure_count_handler)],
+            BROCHURE_SETUP: [CallbackQueryHandler(brochure_setup_handler, pattern="^(proj_sel_|proj_done|proj_back)")],
+            BROCHURE_TYPE: [CallbackQueryHandler(brochure_type_handler, pattern="^proj_type_")],
+            FOLDING: [CallbackQueryHandler(folding_choice, pattern="^folding_")],
+            FOLDING_SELECT: [CallbackQueryHandler(folding_select, pattern="^folding_")],
+            PRINT_COPIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, print_copies_handler)],
+            READY_TIME: [CallbackQueryHandler(time_choice, pattern="^time_")],
+            STRING_COPIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, string_copies_handler)],
+            CONFIRM: [CallbackQueryHandler(confirm_choice, pattern="^confirm_")],
+            WAIT_OPERATOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, operator_chat), CallbackQueryHandler(operator_choice, pattern="^operator_")],
+        },
+        fallbacks=[CommandHandler('cancel', cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, unsupported_text)]
+    )
+    
+    application.add_handler(conv_handler)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_rating_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_comment_handler))
+    application.add_handler(CallbackQueryHandler(admin_cancel_choice, pattern="^admin_cancel:"))
+    application.add_handler(CallbackQueryHandler(notify_client, pattern="^ready_"))
+    application.add_handler(CallbackQueryHandler(issue_client, pattern="^issue_"))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_cancel_reason))
+    application.add_handler(CommandHandler('reply', reply_to_client))
+    application.add_handler(CommandHandler('test', test))
+    application.add_handler(CommandHandler('sendtest', send_test))
+    
+    print("🤖 Бот запущен!")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+# --- ЗАПУСК ДЛЯ RENDER ---
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -960,14 +997,13 @@ def health_check():
     return 'Bot is running!'
 
 def run_flask():
-    # Запускаем Flask в отдельном потоке (фоне)
     flask_app.run(host='0.0.0.0', port=int(os.getenv("PORT", 10000)))
 
 if __name__ == "__main__":
-    # Запускаем Flask в фоновом потоке, чтобы Render видел порт
+    # Запускаем Flask в фоне (для Render)
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
     
-    # ЗАПУСКАЕМ БОТА В ГЛАВНОМ ПОТОКЕ (это исправит ошибку!)
+    # Запускаем бота в главном потоке
     run_bot()
