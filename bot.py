@@ -225,7 +225,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка в handle_file: {e}")
         await update.message.reply_text("❌ Произошла ошибка при обработке файла. Попробуйте отправить другой файл или нажмите /start.")
         return ConversationHandler.END
-# --- ЧАСТЬ 2 (продолжение) ---
+
 
 async def print_mode_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
