@@ -18,11 +18,11 @@ ADMIN_ID = 6592882382
 MAX_FILE_SIZE_MB = 50
 MIN_FILE_SIZE_KB = 10
 
-# Состояния
-(AUTH, WAIT_FILE, FORMAT, SIDED, ADD_FILE, BROCHURE, 
- BROCHURE_COUNT, BROCHURE_SETUP, BROCHURE_TYPE, FOLDING, FOLDING_SELECT, 
+# Состояния (Добавлены SET_BROCHURE_COUNT, SETUP_BROCHURE, SETUP_BROCHURE_TYPE)
+(AUTH, WAIT_FILE, FORMAT, SIDED, ADD_FILE, FOLDING, FOLDING_SELECT, 
  READY_TIME, CONFIRM, WAIT_OPERATOR, PRINT_COPIES, STRING_COPIES, 
- PRINT_MODE, INPUT_PAGES, COLOR_MODE, INPUT_COLOR_PAGES) = range(20)
+ PRINT_MODE, INPUT_PAGES, COLOR_MODE, INPUT_COLOR_PAGES, 
+ SET_BROCHURE_COUNT, SETUP_BROCHURE, SETUP_BROCHURE_TYPE) = range(21)
 
 # Цены
 PRICES_COLOR = {'A4': 60, 'A3': 140, 'A2': 300, 'A1': 500, 'A0': 1000}
@@ -121,17 +121,16 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
-        
         if not is_business_hours():
             await update.message.reply_text(
                 "⏰ Мы закрыты!\n"
                 "Наш график работы:\n"
                 "Понедельник - Пятница с 9:00 до 20:00\n"
-                "В выходные мы не работаем. Заказы будут приниматься в рабочее время."
+                "В выходные мы не работаем."
             )
             return ConversationHandler.END
         
-        user_orders[user_id] = [{'user_info': 'Unknown', 'files': [], 'projects': []}]
+        user_orders[user_id] = [{'user_info': 'Unknown', 'files': [], 'projects': [], 'folding': False, 'folding_files': [], 'folding_price': 0, 'string': False, 'string_price': 0, 'string_copies': 0, 'ready_time': None, 'total_price': 0, 'is_express': False, 'express_fee': 0}]
         context.user_data['selected_folding'] = []
         context.user_data['copy_index'] = 0
         
@@ -146,9 +145,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "https://smallpdf.com/ru/edit-pdf\n\n"
             "📄 **Если у вас нет PDF-файла**, его можно сконвертировать здесь:\n"
             "https://smallpdf.com/ru/pdf-converter\n\n"
-            "🎮 Управление:\n"
-            "• Отменить заказ: /cancel\n"
-            "• Начать заново: /start\n\n"
             "📝 Для начала авторизуйся:\n"
             "Напишите ФИО и ИКГ (например: Иванов Иван Иванович, ИКГ-01-20)"
         )
@@ -160,22 +156,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
-        order = {'user_info': update.message.text, 'files': [], 'projects': [], 'folding': False, 'folding_files': [], 'folding_price': 0, 'string': False, 'string_price': 0, 'string_copies': 0, 'ready_time': None, 'total_price': 0, 'is_express': False, 'express_fee': 0}
-        user_orders[user_id] = [order]
+        user_orders[user_id][0]['user_info'] = update.message.text
         await update.message.reply_text("✅ Авторизация успешна!\nТеперь отправьте файл для печати (PDF):")
         return WAIT_FILE
     except Exception as e:
-        logger.error(f"Ошибка в auth: {e}")
         await update.message.reply_text("❌ Ошибка при авторизации. Нажмите /start заново.")
         return ConversationHandler.END
 
-# --- ОБРАБОТКА ФАЙЛА ---
+# --- ОБРАБОТКА ФАЙЛА (ЛЮБОЙ ДОКУМЕНТ) ---
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
         document = update.message.document
+        # Проверка на PDF
         if not document or not document.file_name.lower().endswith('.pdf'):
-            await update.message.reply_text("❌ Отправьте файл в формате PDF")
+            await update.message.reply_text("❌ Формат файла не поддерживается! Отправьте файл в формате PDF.")
             return WAIT_FILE
 
         max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
@@ -230,7 +225,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка в handle_file: {e}")
         await update.message.reply_text("❌ Произошла ошибка при обработке файла. Попробуйте отправить другой файл или нажмите /start.")
         return ConversationHandler.END
-
+# --- ЧАСТЬ 2 (продолжение) ---
 
 async def print_mode_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -438,189 +433,14 @@ async def add_file_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("📄 Отправьте следующий файл:")
             return WAIT_FILE
         else:
-            await query.edit_message_text("📚 Нужна ли брошюровка?", 
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Да", callback_data="brochure_yes")], [InlineKeyboardButton("❌ Нет", callback_data="brochure_no")]]))
-            return BROCHURE
-    except Exception as e:
-        logger.error(f"Ошибка в add_file_choice: {e}")
-        return CONFIRM
-
-async def brochure_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        await query.answer()
-        user_id = query.from_user.id
-        current_order = user_orders[user_id][0]
-        
-        if query.data == "brochure_yes":
-            current_order['brochure'] = True
-            await query.edit_message_text("📚 Сколько комплектов брошюровки вам нужно?\n\nНапишите цифру (например, 2):")
-            return BROCHURE_COUNT
-        else:
-            current_order['brochure'] = False
             await query.edit_message_text("📐 Нужно ли сложить чертежи?", 
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Да", callback_data="folding_yes")], [InlineKeyboardButton("❌ Нет", callback_data="folding_no")]]))
             return FOLDING
     except Exception as e:
-        logger.error(f"Ошибка в brochure_choice: {e}")
+        logger.error(f"Ошибка в add_file_choice: {e}")
         return CONFIRM
 
-async def brochure_count_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_id = update.effective_user.id
-        text = update.message.text.strip()
-        if not text.isdigit() or int(text) <= 0:
-            await update.message.reply_text("❌ Пожалуйста, введите целое число больше 0 (например, 1, 2, 3).")
-            return BROCHURE_COUNT
-        
-        total_complexes = int(text)
-        current_order = user_orders[user_id][0]
-        current_order['projects'] = []
-        
-        context.user_data['total_projects'] = total_complexes
-        context.user_data['current_project_index'] = 1
-        context.user_data['temp_project_files'] = []
-        context.user_data['temp_project_type'] = None
-        
-        await show_project_setup(update, context)
-        return BROCHURE_SETUP
-    except Exception as e:
-        logger.error(f"Ошибка в brochure_count_handler: {e}")
-        return CONFIRM
-
-async def show_project_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user_id = update.effective_user.id
-        current_order = user_orders[user_id][0]
-        project_num = context.user_data['current_project_index']
-        
-        used_files = []
-        for project in current_order['projects']:
-            used_files.extend(project['files'])
-        
-        available_files = []
-        for i, file in enumerate(current_order['files']):
-            if i not in used_files and file['name'] is not None:
-                available_files.append((i, file))
-        
-        if not available_files:
-            context.user_data['current_project_index'] = context.user_data['total_projects'] + 1
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="📐 Нужно ли сложить чертежи?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Да", callback_data="folding_yes")], [InlineKeyboardButton("❌ Нет", callback_data="folding_no")]]))
-            return FOLDING
-        
-        keyboard = []
-        for i, file in available_files:
-            if i in context.user_data['temp_project_files']:
-                order_num = context.user_data['temp_project_files'].index(i) + 1
-                label = f"✅ {order_num}. {file['name']} ({file['format']})"
-            else:
-                label = f"⬜ {file['name']} ({file['format']})"
-            keyboard.append([InlineKeyboardButton(label, callback_data=f"proj_sel_{i}")])
-        
-        keyboard.append([InlineKeyboardButton("✅ Готово", callback_data="proj_done")])
-        
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"📚 Соберите Комплект #{project_num}:\n"
-            "Нажимайте на файлы в том порядке, в котором они должны идти в брошюре.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    except Exception as e:
-        logger.error(f"Ошибка в show_project_setup: {e}")
-        return CONFIRM
-
-async def brochure_setup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        await query.answer()
-        user_id = query.from_user.id
-        
-        if query.data == "proj_done":
-            if not context.user_data['temp_project_files']:
-                await query.edit_message_text("❌ Вы не выбрали ни одного файла для этого комплекта.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="proj_back")]]))
-                return BROCHURE_SETUP
-            
-            await query.edit_message_text("📚 Комплект собран! Выберите тип брошюровки:", 
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔄 Пружинка", callback_data="proj_type_spring")],
-                    [InlineKeyboardButton("🧵 Бечевка", callback_data="proj_type_string")]
-                ]))
-            return BROCHURE_TYPE
-            
-        elif query.data == "proj_back":
-            await query.edit_message_text("📚 Нужна ли брошюровка?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Да", callback_data="brochure_yes")], [InlineKeyboardButton("❌ Нет", callback_data="brochure_no")]]))
-            return BROCHURE
-            
-        elif query.data.startswith("proj_sel_"):
-            file_idx = int(query.data.split('_')[2])
-            if file_idx in context.user_data['temp_project_files']:
-                context.user_data['temp_project_files'].remove(file_idx)
-            else:
-                context.user_data['temp_project_files'].append(file_idx)
-            
-            current_order = user_orders[user_id][0]
-            used_files = []
-            for project in current_order['projects']:
-                used_files.extend(project['files'])
-            
-            keyboard = []
-            for i, file in enumerate(current_order['files']):
-                if i not in used_files and file['name'] is not None:
-                    if i in context.user_data['temp_project_files']:
-                        order_num = context.user_data['temp_project_files'].index(i) + 1
-                        label = f"✅ {order_num}. {file['name']} ({file['format']})"
-                    else:
-                        label = f"⬜ {file['name']} ({file['format']})"
-                    keyboard.append([InlineKeyboardButton(label, callback_data=f"proj_sel_{i}")])
-            keyboard.append([InlineKeyboardButton("✅ Готово", callback_data="proj_done")])
-            
-            await query.edit_message_text(f"📚 Соберите Комплект #{context.user_data['current_project_index']}:\nНажимайте на файлы в том порядке, в котором они должны идти в брошюре.", reply_markup=InlineKeyboardMarkup(keyboard))
-            return BROCHURE_SETUP
-    except Exception as e:
-        logger.error(f"Ошибка в brochure_setup_handler: {e}")
-        return CONFIRM
-
-async def brochure_type_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        await query.answer()
-        user_id = query.from_user.id
-        
-        raw_type = query.data.split('_')[2]
-        b_type = 'Пружинка' if raw_type == 'spring' else 'Бечевка'
-        
-        current_order = user_orders[user_id][0]
-        project = {
-            'files': context.user_data['temp_project_files'],
-            'type': b_type,
-            'copies': 1
-        }
-        current_order['projects'].append(project)
-        
-        for file_idx in project['files']:
-            f = current_order['files'][file_idx]
-            if f['format'] in FOLDABLE_FORMATS:
-                if file_idx not in current_order['folding_files']:
-                    current_order['folding_files'].append(file_idx)
-                    current_order['folding'] = True
-                    current_order['folding_price'] += FOLDING_PRICES.get(f['format'], 0)
-        
-        context.user_data['temp_project_files'] = []
-        context.user_data['temp_project_type'] = None
-        
-        if context.user_data['current_project_index'] < context.user_data['total_projects']:
-            context.user_data['current_project_index'] += 1
-            await query.edit_message_text(f"✅ Комплект #{context.user_data['current_project_index'] - 1} готов! Переходим к следующему.")
-            await show_project_setup(update, context)
-            return BROCHURE_SETUP
-        else:
-            await query.edit_message_text("✅ Все комплекты собраны!")
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="📐 Нужно ли сложить чертежи?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Да", callback_data="folding_yes")], [InlineKeyboardButton("❌ Нет", callback_data="folding_no")]]))
-            return FOLDING
-    except Exception as e:
-        logger.error(f"Ошибка в brochure_type_handler: {e}")
-        return CONFIRM
-
+# --- СКЛАДЫВАНИЕ ЧЕРТЕЖЕЙ (ТОЛЬКО ВНЕ БРОШЮР) ---
 async def folding_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
@@ -631,12 +451,24 @@ async def folding_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if query.data == "folding_yes":
             current_order['folding'] = True
             context.user_data['selected_folding'] = []
+            
+            # Собираем индексы файлов, которые находятся в брошюрах
+            broshure_files_idx = []
+            for project in current_order.get('projects', []):
+                broshure_files_idx.extend(project['files'])
+                
             keyboard = []
             for i, file in enumerate(current_order['files']):
                 if file['name'] is not None and file['format'] in FOLDABLE_FORMATS:
-                    keyboard.append([InlineKeyboardButton(f"📄 {file['name']} ({file['format']})", callback_data=f"folding_{i}")])
+                    if i not in broshure_files_idx:
+                        keyboard.append([InlineKeyboardButton(f"📄 {file['name']} ({file['format']})", callback_data=f"folding_{i}")])
+            
+            if not keyboard:
+                await query.edit_message_text("❌ Нет отдельных чертежей для складывания (все в брошюре). Переходим дальше!")
+                return await show_final_order(update, context)
+                
             keyboard.append([InlineKeyboardButton("✅ Готово", callback_data="folding_done")])
-            await query.edit_message_text("📐 Выберите файлы для складывания (доступны только чертежи A0-A3):", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text("📐 Выберите отдельные чертежи для складывания (доступны только те, что не в брошюре A0-A3):", reply_markup=InlineKeyboardMarkup(keyboard))
             return FOLDING_SELECT
         else:
             current_order['folding'] = False
@@ -685,6 +517,7 @@ async def folding_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка в folding_select: {e}")
         return CONFIRM
 
+# --- ИТОГ И КОПИИ ПЕЧАТИ ---
 async def show_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -696,25 +529,15 @@ async def show_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if file_data['name'] is not None:
                 side = 'Односторонняя' if file_data['sided'] == 'single' else 'Двусторонняя'
                 response += f"📄 Файл #{file_num}: {file_data['name']}\n"
-                
                 if file_data['selected_pages']:
                     response += f"  📄 Страницы: {', '.join(map(str, file_data['selected_pages']))}\n"
                 else:
                     response += f"  📄 Все страницы\n"
-                
                 response += f"  📐 {file_data['format']} | {side}\n"
                 response += f"  🎨 Цветных: {file_data['color_pages']} | ЧБ: {file_data['bw_pages']}\n"
                 response += f"  💰 {file_data['print_price']} руб.\n"
                 file_num += 1
         
-        if current_order.get('projects'):
-            response += f"\n📚 БРОШЮРОВКА (Комплекты):\n"
-            for p_idx, project in enumerate(current_order['projects'], 1):
-                response += f"  Комплект #{p_idx} ({project['type']}):\n"
-                for order_idx, file_idx in enumerate(project['files'], 1):
-                    f = current_order['files'][file_idx]
-                    response += f"    {order_idx}. {f['name']} ({f['format']})\n"
-            
         if current_order.get('folding', False) and current_order.get('folding_files'):
             response += f"\n📐 СКЛАДЫВАНИЕ ЧЕРТЕЖЕЙ:\n"
             for idx in current_order['folding_files']:
@@ -760,6 +583,29 @@ async def print_copies_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             return PRINT_COPIES
         else:
             await update.message.reply_text("✅ Копии заданы!")
+            
+            # НОВОЕ: Спрашиваем количество брошюр
+            await update.message.reply_text("📚 Сколько брошюр нужно сшить? (Введите цифру, если не нужно - 0)")
+            return SET_BROCHURE_COUNT
+    except Exception as e:
+        logger.error(f"Ошибка в print_copies_handler: {e}")
+        return CONFIRM
+
+# --- НОВАЯ ЛОГИКА БРОШЮРОВКИ (ПОСЛЕ КОПИЙ) ---
+async def set_brochure_count_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        user_id = update.effective_user.id
+        text = update.message.text.strip()
+        if not text.isdigit():
+            await update.message.reply_text("❌ Введите целое число (например, 0, 1, 2).")
+            return SET_BROCHURE_COUNT
+        
+        count = int(text)
+        current_order = user_orders[user_id][0]
+        current_order['projects'] = []
+        
+        if count == 0:
+            await update.message.reply_text("✅ Брошюровка не нужна!")
             await update.message.reply_text("🕐 Когда готовы забрать?\n⚡ Доступна ЭКСПРЕСС печать (+30% к стоимости)!", 
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("⚡ Экспресс (от 3 мин до 1 часа)", callback_data="time_express")],
@@ -768,10 +614,140 @@ async def print_copies_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                     [InlineKeyboardButton("📅 В течение дня", callback_data="time_day")]
                 ]))
             return READY_TIME
+        
+        context.user_data['total_projects'] = count
+        context.user_data['current_project_index'] = 1
+        context.user_data['temp_project_files'] = []
+        context.user_data['temp_project_type'] = None
+        
+        await show_project_setup(update, context)
+        return SETUP_BROCHURE
     except Exception as e:
-        logger.error(f"Ошибка в print_copies_handler: {e}")
+        logger.error(f"Ошибка в set_brochure_count_handler: {e}")
         return CONFIRM
 
+async def show_project_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        user_id = update.effective_user.id
+        current_order = user_orders[user_id][0]
+        project_num = context.user_data['current_project_index']
+        
+        used_files = []
+        for project in current_order['projects']:
+            used_files.extend(project['files'])
+        
+        available_files = []
+        for i, file in enumerate(current_order['files']):
+            if i not in used_files and file['name'] is not None:
+                available_files.append((i, file))
+        
+        if not available_files:
+            context.user_data['current_project_index'] = context.user_data['total_projects'] + 1
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="📐 Нужно ли сложить чертежи?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Да", callback_data="folding_yes")], [InlineKeyboardButton("❌ Нет", callback_data="folding_no")]]))
+            return FOLDING
+        
+        keyboard = []
+        for i, file in available_files:
+            if i in context.user_data['temp_project_files']:
+                order_num = context.user_data['temp_project_files'].index(i) + 1
+                label = f"✅ {order_num}. {file['name']} ({file['format']})"
+            else:
+                label = f"⬜ {file['name']} ({file['format']})"
+            keyboard.append([InlineKeyboardButton(label, callback_data=f"proj_sel_{i}")])
+        
+        keyboard.append([InlineKeyboardButton("✅ Готово", callback_data="proj_done")])
+        
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"📚 Соберите Брошюру #{project_num}:\n"
+            "Нажимайте на файлы в том порядке, в котором они должны идти в брошюре.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logger.error(f"Ошибка в show_project_setup: {e}")
+        return CONFIRM
+
+async def brochure_setup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        await query.answer()
+        user_id = query.from_user.id
+        
+        if query.data == "proj_done":
+            if not context.user_data['temp_project_files']:
+                await query.edit_message_text("❌ Вы не выбрали ни одного файла для этой брошюры.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="proj_back")]]))
+                return SETUP_BROCHURE
+            
+            await query.edit_message_text("📚 Брошюра собрана! Какой тип брошюровки?", 
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Пружинка", callback_data="proj_type_spring")],
+                    [InlineKeyboardButton("🧵 Бечевка", callback_data="proj_type_string")]
+                ]))
+            return SETUP_BROCHURE_TYPE
+        elif query.data == "proj_back":
+            await query.edit_message_text("📚 Сколько брошюр нужно сшить? Введите цифру:")
+            return SET_BROCHURE_COUNT
+        elif query.data.startswith("proj_sel_"):
+            file_idx = int(query.data.split('_')[2])
+            if file_idx in context.user_data['temp_project_files']:
+                context.user_data['temp_project_files'].remove(file_idx)
+            else:
+                context.user_data['temp_project_files'].append(file_idx)
+            current_order = user_orders[user_id][0]
+            used_files = []
+            for project in current_order['projects']:
+                used_files.extend(project['files'])
+            keyboard = []
+            for i, file in enumerate(current_order['files']):
+                if i not in used_files and file['name'] is not None:
+                    if i in context.user_data['temp_project_files']:
+                        order_num = context.user_data['temp_project_files'].index(i) + 1
+                        label = f"✅ {order_num}. {file['name']} ({file['format']})"
+                    else:
+                        label = f"⬜ {file['name']} ({file['format']})"
+                    keyboard.append([InlineKeyboardButton(label, callback_data=f"proj_sel_{i}")])
+            keyboard.append([InlineKeyboardButton("✅ Готово", callback_data="proj_done")])
+            await query.edit_message_text(f"📚 Соберите Брошюру #{context.user_data['current_project_index']}:\nНажимайте на файлы в том порядке, в котором они должны идти в брошюре.", reply_markup=InlineKeyboardMarkup(keyboard))
+            return SETUP_BROCHURE
+    except Exception as e:
+        logger.error(f"Ошибка в brochure_setup_handler: {e}")
+        return CONFIRM
+
+async def brochure_type_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        await query.answer()
+        user_id = query.from_user.id
+        
+        raw_type = query.data.split('_')[2]
+        b_type = 'Пружинка' if raw_type == 'spring' else 'Бечевка'
+        
+        current_order = user_orders[user_id][0]
+        project = {
+            'files': context.user_data['temp_project_files'],
+            'type': b_type,
+            'copies': 1
+        }
+        current_order['projects'].append(project)
+        
+        # УДАЛЕНО: Автоматическое добавление чертежей в складывание (теперь они не складываются, если в брошюре)
+        context.user_data['temp_project_files'] = []
+        context.user_data['temp_project_type'] = None
+        
+        if context.user_data['current_project_index'] < context.user_data['total_projects']:
+            context.user_data['current_project_index'] += 1
+            await query.edit_message_text(f"✅ Брошюра #{context.user_data['current_project_index'] - 1} готова! Переходим к следующей.")
+            await show_project_setup(update, context)
+            return SETUP_BROCHURE
+        else:
+            await query.edit_message_text("✅ Все брошюры собраны!")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="📐 Нужно ли сложить чертежи?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Да", callback_data="folding_yes")], [InlineKeyboardButton("❌ Нет", callback_data="folding_no")]]))
+            return FOLDING
+    except Exception as e:
+        logger.error(f"Ошибка в brochure_type_handler: {e}")
+        return CONFIRM
+
+# --- ВРЕМЯ, БЕЧЕВКА, ПОДТВЕРЖДЕНИЕ ---
 async def time_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
@@ -838,7 +814,7 @@ async def string_copies_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     
         if current_order.get('projects'):
             for p_idx, project in enumerate(current_order['projects'], 1):
-                response += f"📚 Комплект #{p_idx}: {project['type']}, 1 шт.\n"
+                response += f"📚 Брошюра #{p_idx}: {project['type']}, {project['copies']} шт.\n"
         
         if current_order.get('string', False): response += f"🧵 Бечевка: {string_copies} шт.\n"
         else: response += f"🧵 Бечевка: не нужна\n"
@@ -877,6 +853,7 @@ async def confirm_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка в confirm_choice: {e}")
         return ConversationHandler.END
 
+# --- ОТПРАВКА АДМИНУ ---
 async def send_order_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, order: dict):
     try:
         total_sum = order['total_price']
@@ -900,10 +877,10 @@ async def send_order_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
                 admin_message += f"    Копии: {copies} шт. | Итого: {total_file_price} руб.\n"
         
         if order.get('projects'):
-            admin_message += f"\n📚 БРОШЮРОВКА (КОМПЛЕКТЫ):\n"
+            admin_message += f"\n📚 БРОШЮРОВКА (БРОШЮРЫ):\n"
             for p_idx, project in enumerate(order['projects'], 1):
                 b_type = 'Пружинка' if project['type'] == 'spring' else 'Бечевка'
-                admin_message += f"Комплект #{p_idx} ({b_type}):\n"
+                admin_message += f"Брошюра #{p_idx} ({b_type}, {project['copies']} шт.):\n"
                 for order_idx, file_idx in enumerate(project['files'], 1):
                     f = order['files'][file_idx]
                     p = calculate_brochure_price(f['format'], f['total_pages'])
@@ -951,6 +928,7 @@ async def send_order_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE
             except Exception as e:
                 logger.error(f"Не удалось удалить файл: {e}")
 
+# --- ОТЗЫВЫ И ОСТАЛЬНОЕ ---
 async def issue_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
@@ -1171,7 +1149,7 @@ def run_bot():
         entry_points=[CommandHandler('start', start)],
         states={
             AUTH: [MessageHandler(filters.TEXT & ~filters.COMMAND, auth)],
-            WAIT_FILE: [MessageHandler(filters.Document.PDF, handle_file)],
+            WAIT_FILE: [MessageHandler(filters.Document.ALL, handle_file)],
             PRINT_MODE: [CallbackQueryHandler(print_mode_choice, pattern="^print_")],
             INPUT_PAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_pages_handler)],
             COLOR_MODE: [CallbackQueryHandler(color_mode_choice, pattern="^color_mode_")],
@@ -1179,13 +1157,12 @@ def run_bot():
             FORMAT: [CallbackQueryHandler(format_choice, pattern="^format_")],
             SIDED: [CallbackQueryHandler(sided_choice, pattern="^sided_")],
             ADD_FILE: [CallbackQueryHandler(add_file_choice, pattern="^add_")],
-            BROCHURE: [CallbackQueryHandler(brochure_choice, pattern="^brochure_")],
-            BROCHURE_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, brochure_count_handler)],
-            BROCHURE_SETUP: [CallbackQueryHandler(brochure_setup_handler, pattern="^(proj_sel_|proj_done|proj_back)")],
-            BROCHURE_TYPE: [CallbackQueryHandler(brochure_type_handler, pattern="^proj_type_")],
             FOLDING: [CallbackQueryHandler(folding_choice, pattern="^folding_")],
             FOLDING_SELECT: [CallbackQueryHandler(folding_select, pattern="^folding_")],
             PRINT_COPIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, print_copies_handler)],
+            SET_BROCHURE_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_brochure_count_handler)],
+            SETUP_BROCHURE: [CallbackQueryHandler(brochure_setup_handler, pattern="^(proj_sel_|proj_done|proj_back)")],
+            SETUP_BROCHURE_TYPE: [CallbackQueryHandler(brochure_type_handler, pattern="^proj_type_")],
             READY_TIME: [CallbackQueryHandler(time_choice, pattern="^time_")],
             STRING_COPIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, string_copies_handler)],
             CONFIRM: [CallbackQueryHandler(confirm_choice, pattern="^confirm_")],
