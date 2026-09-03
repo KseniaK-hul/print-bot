@@ -7,21 +7,23 @@ from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
+# Настройки логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# Читаем токен из переменных окружения Render (или берем прямо из кода)
-TOKEN = os.getenv("BOT_TOKEN", "ВАШ_НОВЫЙ_ТОКЕН_СЮДА")
+# !!! ВСТАВЬТЕ ВАШ НОВЫЙ ТОКЕН (после Revoke) !!!
+TOKEN = os.getenv("BOT_TOKEN", "8895041359:AAGWbfsxSWSLNC31SEihjAQSSVWbvdaYXsg")
 ADMIN_ID = 6592882382
 
 MAX_FILE_SIZE_MB = 50
 MIN_FILE_SIZE_KB = 10
 
-# Состояния
+# Состояния бота
 (AUTH, WAIT_FILE, FORMAT, SIDED, ADD_FILE, BROCHURE, 
  BROCHURE_COUNT, BROCHURE_SETUP, BROCHURE_TYPE, FOLDING, FOLDING_SELECT, 
  READY_TIME, CONFIRM, WAIT_OPERATOR, PRINT_COPIES, STRING_COPIES, 
  PRINT_MODE, INPUT_PAGES, COLOR_MODE, INPUT_COLOR_PAGES) = range(20)
 
+# Цены
 PRICES_COLOR = {'A4': 60, 'A3': 140, 'A2': 300, 'A1': 500, 'A0': 1000}
 PRICES_BW = {'A4': 18, 'A3': 60, 'A2': 200, 'A1': 300, 'A0': 600}
 FOLDING_PRICES = {'A0': 100, 'A1': 50, 'A2': 30, 'A3': 10}
@@ -56,7 +58,7 @@ def calculate_brochure_price(format_type, total_pages):
         return 250
     return 0
 
-# --- СТАРТ ---
+# --- СТАРТ И АВТОРИЗАЦИЯ ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_orders[user_id] = [{'user_info': 'Unknown', 'files': [], 'projects': []}]
@@ -325,7 +327,7 @@ async def add_file_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Да", callback_data="brochure_yes")], [InlineKeyboardButton("❌ Нет", callback_data="brochure_no")]]))
         return BROCHURE
 
-# --- ЛОГИКА КОМПЛЕКТОВ БРОШЮРОВКИ ---
+# --- БРОШЮРОВКА ---
 async def brochure_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -539,6 +541,7 @@ async def folding_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("📐 Выберите файлы для складывания:", reply_markup=InlineKeyboardMarkup(keyboard))
         return FOLDING_SELECT
 
+# --- ИТОГ И КОПИИ ПЕЧАТИ ---
 async def show_final_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     current_order = user_orders[user_id][0]
@@ -618,6 +621,7 @@ async def print_copies_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             ]))
         return READY_TIME
 
+# --- ВРЕМЯ, БЕЧЕВКА, ПОДТВЕРЖДЕНИЕ ---
 async def time_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -849,6 +853,7 @@ async def admin_cancel_reason(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка при отправке уведомления клиенту: {e}")
 
+# --- ОПЕРАТОР ---
 async def unsupported_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if update.message.text.startswith('/'): return ConversationHandler.END
