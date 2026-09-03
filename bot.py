@@ -954,55 +954,15 @@ flask_app = Flask(__name__)
 def health_check():
     return 'Bot is running!'
 
-def run_bot():
-    # Создаем и запускаем приложение Telegram в отдельном потоке
-    application = Application.builder().token(TOKEN).build()
-    
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            AUTH: [MessageHandler(filters.TEXT & ~filters.COMMAND, auth)],
-            WAIT_FILE: [MessageHandler(filters.Document.PDF, handle_file)],
-            PRINT_MODE: [CallbackQueryHandler(print_mode_choice, pattern="^print_")],
-            INPUT_PAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_pages_handler)],
-            COLOR_MODE: [CallbackQueryHandler(color_mode_choice, pattern="^color_mode_")],
-            INPUT_COLOR_PAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_color_pages_handler)],
-            FORMAT: [CallbackQueryHandler(format_choice, pattern="^format_")],
-            SIDED: [CallbackQueryHandler(sided_choice, pattern="^sided_")],
-            ADD_FILE: [CallbackQueryHandler(add_file_choice, pattern="^add_")],
-            BROCHURE: [CallbackQueryHandler(brochure_choice, pattern="^brochure_")],
-            BROCHURE_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, brochure_count_handler)],
-            BROCHURE_SETUP: [CallbackQueryHandler(brochure_setup_handler, pattern="^(proj_sel_|proj_done|proj_back)")],
-            BROCHURE_TYPE: [CallbackQueryHandler(brochure_type_handler, pattern="^proj_type_")],
-            FOLDING: [CallbackQueryHandler(folding_choice, pattern="^folding_")],
-            FOLDING_SELECT: [CallbackQueryHandler(folding_select, pattern="^folding_")],
-            PRINT_COPIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, print_copies_handler)],
-            READY_TIME: [CallbackQueryHandler(time_choice, pattern="^time_")],
-            STRING_COPIES: [MessageHandler(filters.TEXT & ~filters.COMMAND, string_copies_handler)],
-            CONFIRM: [CallbackQueryHandler(confirm_choice, pattern="^confirm_")],
-            WAIT_OPERATOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, operator_chat), CallbackQueryHandler(operator_choice, pattern="^operator_")],
-        },
-        fallbacks=[CommandHandler('cancel', cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, unsupported_text)]
-    )
-    
-    application.add_handler(conv_handler)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_rating_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_comment_handler))
-    application.add_handler(CallbackQueryHandler(admin_cancel_choice, pattern="^admin_cancel:"))
-    application.add_handler(CallbackQueryHandler(notify_client, pattern="^ready_"))
-    application.add_handler(CallbackQueryHandler(issue_client, pattern="^issue_"))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_cancel_reason))
-    application.add_handler(CommandHandler('reply', reply_to_client))
-    application.add_handler(CommandHandler('test', test))
-    application.add_handler(CommandHandler('sendtest', send_test))
-    
-    print("🤖 Бот запущен!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+def run_flask():
+    # Запускаем Flask в отдельном потоке (фоне)
+    flask_app.run(host='0.0.0.0', port=int(os.getenv("PORT", 10000)))
 
 if __name__ == "__main__":
-    # Запускаем Telegram бота в отдельном потоке
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.start()
+    # Запускаем Flask в фоновом потоке, чтобы Render видел порт
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
     
-    # Запускаем Flask для Render (порт 10000 - стандарт для Render)
-    flask_app.run(host='0.0.0.0', port=int(os.getenv("PORT", 10000)))
+    # ЗАПУСКАЕМ БОТА В ГЛАВНОМ ПОТОКЕ (это исправит ошибку!)
+    run_bot()
