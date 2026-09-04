@@ -1,3 +1,4 @@
+
 import logging
 import os
 import asyncio
@@ -19,7 +20,7 @@ MAX_FILE_SIZE_MB = 20
 MIN_FILE_SIZE_KB = 10
 
 # ==========================================
-# ПЕРЕВОДЫ
+# ПЕРЕВОДЫ (Русский / English)
 # ==========================================
 LANG_RU = 'ru'
 LANG_EN = 'en'
@@ -246,18 +247,14 @@ async def auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
 # ==========================================
-# ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ДОКУМЕНТОВ (ИСПРАВЛЕНИЕ КРАША)
+# ОБРАБОТКА ФАЙЛОВ (С Защитой от .docx)
 # ==========================================
 async def ignore_document(update, context):
     try:
         uid = update.effective_user.id
         await update.message.reply_text(t(uid, 'bad_file'))
-    except:
-        pass
+    except: pass
 
-# ==========================================
-# ОБРАБОТКА ФАЙЛОВ
-# ==========================================
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -292,28 +289,646 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка file: {e}")
         return ConversationHandler.END
 
-# ==========================================
-# ВСЕ ОСТАЛЬНЫЕ ФУНКЦИИ (print_mode_choice, input_pages_handler, color_mode_choice,
-# input_color_pages_handler, format_choice, sided_choice, add_file_choice,
-# folding_choice, folding_select, show_final_order, print_copies_handler,
-# set_brochure_count_handler, show_project_setup, brochure_setup_handler,
-# brochure_type_handler, time_choice, string_copies_handler, confirm_choice,
-# send_order_to_admin, issue_client, feedback_rating_handler, feedback_comment_handler,
-# unsupported_text, operator_choice, operator_chat, reply_to_client, notify_client,
-# cancel, test, send_test)
-# ... (Эти функции остаются точно такими же, как в предыдущем рабочем коде, 
-# с защитой try/except и удалением текстовых ошибок)
-# ==========================================
+async def print_mode_choice(update, context):
+    try:
+        q = update.callback_query
+        await q.answer()
+        uid = q.from_user.id
+        f = user_orders[uid][0]['files'][-1]
+        if q.data == "print_all":
+            f['selected_pages'] = None
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(uid, 'color_all'), callback_data="color_all")], [InlineKeyboardButton(t(uid, 'bw_all'), callback_data="bw_all")], [InlineKeyboardButton(t(uid, 'color_specific'), callback_data="color_spec")]])
+            await q.edit_message_text(t(uid, 'color_choice'), reply_markup=kb)
+            return COLOR_MODE
+        else:
+            await q.edit_message_text(t(uid, 'choose_pages', total=f['total_pages']))
+            return INPUT_PAGES
+    except: return CONFIRM
 
-# ... (Вставьте сюда все остальные функции из предыдущего готового кода, 
-# они полностью идентичны и уже защищены от ошибок)
+async def input_pages_handler(update, context):
+    try:
+        uid = update.effective_user.id
+        text = update.message.text.strip()
+        f = user_orders[uid][0]['files'][-1]
+        total = f['total_pages']
+        pages = []
+        try:
+            for part in text.split(','):
+                part = part.strip()
+                if '-' in part:
+                    s, e = map(int, part.split('-'))
+                    if s > e or s < 1 or e > total:
+                        await update.message.reply_text(t(uid, 'choose_pages', total=total))
+                        return INPUT_PAGES
+                    pages.extend(range(s, e+1))
+                else:
+                    p = int(part)
+                    if p < 1 or p > total:
+                        await update.message.reply_text(t(uid, 'choose_pages', total=total))
+                        return INPUT_PAGES
+                    pages.append(p)
+        except:
+            await update.message.reply_text(t(uid, 'choose_pages', total=total))
+            return INPUT_PAGES
+
+        f['selected_pages'] = sorted(list(set(pages)))
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(uid, 'color_all'), callback_data="color_all")], [InlineKeyboardButton(t(uid, 'bw_all'), callback_data="bw_all")], [InlineKeyboardButton(t(uid, 'color_specific'), callback_data="color_spec")]])
+        await update.message.reply_text(t(uid, 'color_choice'), reply_markup=kb)
+        return COLOR_MODE
+    except: return INPUT_PAGES
+
+async def color_mode_choice(update, context):
+    try:
+        q = update.callback_query
+        await q.answer()
+        uid = q.from_user.id
+        f = user_orders[uid][0]['files'][-1]
+        total = len(f['selected_pages']) if f['selected_pages'] else f['total_pages']
+
+        if q.data == "color_all":
+            f['color_pages'] = f.get('actual_color_pages', total)
+            f['bw_pages'] = f.get('actual_bw_pages', 0)
+            await q.edit_message_text(t(uid, 'format_choice'), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("A4", callback_data="fmt_A4")], [InlineKeyboardButton("A3", callback_data="fmt_A3")], [InlineKeyboardButton("A2", callback_data="fmt_A2")], [InlineKeyboardButton("A1", callback_data="fmt_A1")], [InlineKeyboardButton("A0", callback_data="fmt_A0")]]))
+            return FORMAT
+        elif q.data == "bw_all":
+            f['color_pages'] = 0
+            f['bw_pages'] = total
+            await q.edit_message_text(t(uid, 'format_choice'), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("A4", callback_data="fmt_A4")], [InlineKeyboardButton("A3", callback_data="fmt_A3")], [InlineKeyboardButton("A2", callback_data="fmt_A2")], [InlineKeyboardButton("A1", callback_data="fmt_A1")], [InlineKeyboardButton("A0", callback_data="fmt_A0")]]))
+            return FORMAT
+        else:
+            await q.edit_message_text(t(uid, 'choose_color_pages'))
+            return INPUT_COLOR_PAGES
+    except: return CONFIRM
+
+async def input_color_pages_handler(update, context):
+    try:
+        uid = update.effective_user.id
+        text = update.message.text.strip()
+        f = user_orders[uid][0]['files'][-1]
+        pages_to_print = f['selected_pages'] if f['selected_pages'] else list(range(1, f['total_pages']+1))
+        color_pages = []
+        try:
+            for part in text.split(','):
+                part = part.strip()
+                if '-' in part:
+                    s, e = map(int, part.split('-'))
+                    if s > e or s < 1 or e > f['total_pages']:
+                        await update.message.reply_text(t(uid, 'choose_color_pages'))
+                        return INPUT_COLOR_PAGES
+                    color_pages.extend(range(s, e+1))
+                else:
+                    p = int(part)
+                    if p < 1 or p > f['total_pages']:
+                        await update.message.reply_text(t(uid, 'choose_color_pages'))
+                        return INPUT_COLOR_PAGES
+                    color_pages.append(p)
+        except:
+            await update.message.reply_text(t(uid, 'choose_color_pages'))
+            return INPUT_COLOR_PAGES
+
+        final_color = [p for p in color_pages if p in pages_to_print]
+        f['color_pages'] = len(final_color)
+        f['bw_pages'] = len(pages_to_print) - len(final_color)
+
+        await update.message.reply_text(t(uid, 'format_choice'), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("A4", callback_data="fmt_A4")], [InlineKeyboardButton("A3", callback_data="fmt_A3")], [InlineKeyboardButton("A2", callback_data="fmt_A2")], [InlineKeyboardButton("A1", callback_data="fmt_A1")], [InlineKeyboardButton("A0", callback_data="fmt_A0")]]))
+        return FORMAT
+    except: return INPUT_COLOR_PAGES
+
+async def format_choice(update, context):
+    try:
+        q = update.callback_query
+        await q.answer()
+        uid = q.from_user.id
+        f = user_orders[uid][0]['files'][-1]
+        f['format'] = q.data.split('_')[1]
+
+        if f['format'] == 'A4':
+            await q.edit_message_text(t(uid, 'sided_choice'), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t(uid, 'one_side'), callback_data="sided_s")], [InlineKeyboardButton(t(uid, 'two_side'), callback_data="sided_d")]]))
+            return SIDED
+        else:
+            f['sided'] = 's'
+            total = 0
+            if f['color_pages'] > 0: total += f['color_pages'] * PRICES_COLOR[f['format']]
+            if f['bw_pages'] > 0: total += f['bw_pages'] * PRICES_BW[f['format']]
+            f['print_price'] = total
+            await q.edit_message_text(t(uid, 'total_price', price=total), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Yes", callback_data="add_y")], [InlineKeyboardButton("❌ No", callback_data="add_n")]]))
+            return ADD_FILE
+    except: return CONFIRM
+
+async def sided_choice(update, context):
+    try:
+        q = update.callback_query
+        await q.answer()
+        uid = q.from_user.id
+        f = user_orders[uid][0]['files'][-1]
+        f['sided'] = 's' if q.data == 'sided_s' else 'd'
+
+        total = 0
+        if f['color_pages'] > 0: total += f['color_pages'] * PRICES_COLOR[f['format']]
+        if f['bw_pages'] > 0: total += f['bw_pages'] * PRICES_BW[f['format']]
+        f['print_price'] = total
+
+        await q.edit_message_text(t(uid, 'total_price', price=total), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Yes", callback_data="add_y")], [InlineKeyboardButton("❌ No", callback_data="add_n")]]))
+        return ADD_FILE
+    except: return CONFIRM
+
+async def add_file_choice(update, context):
+    try:
+        q = update.callback_query
+        await q.answer()
+        uid = q.from_user.id
+        if q.data == "add_y":
+            await q.edit_message_text(t(uid, 'add_file'))
+            return WAIT_FILE
+        else:
+            await q.edit_message_text(t(uid, 'fold_choice'), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Yes", callback_data="fold_y")], [InlineKeyboardButton("❌ No", callback_data="fold_n")]]))
+            return FOLDING
+    except: return CONFIRM
+
+# ==========================================
+# СКЛАДЫВАНИЕ
+# ==========================================
+async def folding_choice(update, context):
+    try:
+        q = update.callback_query
+        await q.answer()
+        uid = q.from_user.id
+        order = user_orders[uid][0]
+        if q.data == "fold_y":
+            order['folding'] = True
+            context.user_data['selected_folding'] = []
+
+            broshure_files_idx = []
+            for project in order.get('projects', []): broshure_files_idx.extend(project['files'])
+
+            kb = []
+            for i, f in enumerate(order['files']):
+                if f['name'] is not None and f['format'] in ['A0', 'A1', 'A2', 'A3'] and i not in broshure_files_idx:
+                    kb.append([InlineKeyboardButton(f"📄 {f['name']}", callback_data=f"fold_{i}")])
+
+            if not kb:
+                await q.edit_message_text("❌ Нет отдельных чертежей. Переходим дальше!")
+                return await show_final_order(update, context)
+
+            kb.append([InlineKeyboardButton("✅ Готово", callback_data="fold_done")])
+            await q.edit_message_text(t(uid, 'fold_select'), reply_markup=InlineKeyboardMarkup(kb))
+            return FOLDING_SELECT
+        else:
+            order['folding'] = False
+            return await show_final_order(update, context)
+    except: return CONFIRM
+
+async def folding_select(update, context):
+    try:
+        q = update.callback_query
+        await q.answer()
+        uid = q.from_user.id
+        order = user_orders[uid][0]
+        if q.data == "fold_done":
+            total = 0
+            for idx in context.user_data['selected_folding']:
+                order['files'][idx]['folding_copies'] = 1
+                total += FOLDING_PRICES.get(order['files'][idx]['format'], 0)
+            order['folding_files'] = context.user_data['selected_folding']
+            order['folding_price'] = total
+            return await show_final_order(update, context)
+        else:
+            idx = int(q.data.split('_')[1])
+            if idx in context.user_data['selected_folding']: context.user_data['selected_folding'].remove(idx)
+            else: context.user_data['selected_folding'].append(idx)
+            kb = []
+            for i, f in enumerate(order['files']):
+                if f['name'] is not None and f['format'] in ['A0', 'A1', 'A2', 'A3']:
+                    check = "✅ " if i in context.user_data['selected_folding'] else ""
+                    kb.append([InlineKeyboardButton(f"{check}{f['name']}", callback_data=f"fold_{i}")])
+            kb.append([InlineKeyboardButton("✅ Готово", callback_data="fold_done")])
+            await q.edit_message_text(t(uid, 'fold_select'), reply_markup=InlineKeyboardMarkup(kb))
+            return FOLDING_SELECT
+    except: return CONFIRM
+
+# ==========================================
+# КОПИИ И БРОШЮРОВКА
+# ==========================================
+async def show_final_order(update, context):
+    try:
+        uid = update.effective_user.id
+        order = user_orders[uid][0]
+        response = "📊 ИТОГОВЫЙ ЗАКАЗ:\n"
+        for i, f in enumerate(order['files']):
+            if f['name'] is not None:
+                side = 'Односторонняя' if f['sided'] == 's' else 'Двусторонняя'
+                response += f"📄 Файл #{i+1}: {f['name']}\n"
+                response += f"  📐 {f['format']} | {side}\n"
+                response += f"  🎨 Цветных: {f['color_pages']} | ЧБ: {f['bw_pages']}\n"
+                response += f"  💰 {f['print_price']} руб.\n"
+
+        if order.get('folding', False) and order.get('folding_files'):
+            response += f"\n📐 Складывание: {order['folding_price']} руб.\n"
+
+        context.user_data['copy_index'] = 0
+        first_name = order['files'][0]['name']
+        msg = f"{response}\n\n" + t(uid, 'copies_header', name=first_name)
+
+        if update.callback_query:
+            await update.callback_query.edit_message_text(msg)
+        else:
+            await update.message.reply_text(msg)
+        return PRINT_COPIES
+    except: return CONFIRM
+
+async def print_copies_handler(update, context):
+    try:
+        uid = update.effective_user.id
+        txt = update.message.text.strip()
+        if not txt.isdigit() or int(txt) <= 0:
+            await update.message.reply_text(t(uid, 'enter_number'))
+            return PRINT_COPIES
+        copies = int(txt)
+        order = user_orders[uid][0]
+        idx = context.user_data['copy_index']
+        order['files'][idx]['copies'] = copies
+        idx += 1
+        if idx < len(order['files']):
+            context.user_data['copy_index'] = idx
+            await update.message.reply_text(t(uid, 'copies_next', copies=copies, num=idx+1, name=order['files'][idx]['name']))
+            return PRINT_COPIES
+        else:
+            await update.message.reply_text(t(uid, 'copies_set'))
+            await update.message.reply_text(t(uid, 'brochure_count'))
+            return SET_BROCHURE_COUNT
+    except: return CONFIRM
+
+async def set_brochure_count_handler(update, context):
+    try:
+        uid = update.effective_user.id
+        txt = update.message.text.strip()
+        if not txt.isdigit():
+            await update.message.reply_text(t(uid, 'enter_number'))
+            return SET_BROCHURE_COUNT
+        count = int(txt)
+        order = user_orders[uid][0]
+        order['projects'] = []
+
+        if count == 0:
+            await update.message.reply_text(t(uid, 'no_brochure'))
+            await update.message.reply_text(t(uid, 'time_choice'), reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚡ Экспресс", callback_data="time_express")],
+                [InlineKeyboardButton("⏱ 1 час", callback_data="time_1h")],
+                [InlineKeyboardButton("⏰ 3 часа", callback_data="time_3h")],
+                [InlineKeyboardButton("📅 День", callback_data="time_day")]
+            ]))
+            return READY_TIME
+
+        context.user_data['total_projects'] = count
+        context.user_data['current_project_index'] = 1
+        context.user_data['temp_project_files'] = []
+        context.user_data['temp_project_type'] = None
+
+        await show_project_setup(update, context)
+        return SETUP_BROCHURE
+    except Exception as e:
+        logger.error(f"Ошибка в set_brochure_count_handler: {e}")
+        return CONFIRM
+
+async def show_project_setup(update, context):
+    try:
+        uid = update.effective_user.id
+        order = user_orders[uid][0]
+        num = context.user_data['current_project_index']
+        used = []
+        for p in order['projects']: used.extend(p['files'])
+
+        avail = []
+        for i, f in enumerate(order['files']):
+            if i not in used and f['name'] is not None: avail.append(i)
+        if not avail:
+            context.user_data['current_project_index'] = context.user_data['total_projects'] + 1
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=t(uid, 'fold_choice'), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Yes", callback_data="fold_y")], [InlineKeyboardButton("❌ No", callback_data="fold_n")]]))
+            return FOLDING
+
+        kb = []
+        for i in avail:
+            if i in context.user_data['temp_project_files']:
+                kb.append([InlineKeyboardButton(f"✅ {context.user_data['temp_project_files'].index(i)+1}. {order['files'][i]['name']}", callback_data=f"proj_{i}")])
+            else:
+                kb.append([InlineKeyboardButton(f"⬜ {order['files'][i]['name']}", callback_data=f"proj_{i}")])
+        kb.append([InlineKeyboardButton("✅ Done", callback_data="proj_done")])
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=t(uid, 'choose_brochure', num=num), reply_markup=InlineKeyboardMarkup(kb))
+    except: return CONFIRM
+
+async def brochure_setup_handler(update, context):
+    try:
+        q = update.callback_query
+        await q.answer()
+        uid = q.from_user.id
+        if q.data == "proj_done":
+            if not context.user_data['temp_project_files']:
+                await q.edit_message_text("❌ No files chosen!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="proj_back")]]))
+                return SETUP_BROCHURE
+            await q.edit_message_text(t(uid, 'brochure_type'), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(t(uid, 'spring'), callback_data="btype_spring")], [InlineKeyboardButton(t(uid, 'string'), callback_data="btype_string")]]))
+            return SETUP_BROCHURE_TYPE
+        elif q.data == "proj_back":
+            await q.edit_message_text(t(uid, 'brochure_count'))
+            return SET_BROCHURE_COUNT
+        elif q.data.startswith("proj_"):
+            idx = int(q.data.split('_')[1])
+            if idx in context.user_data['temp_project_files']: context.user_data['temp_project_files'].remove(idx)
+            else: context.user_data['temp_project_files'].append(idx)
+            order = user_orders[uid][0]
+            used = []
+            for p in order['projects']: used.extend(p['files'])
+            kb = []
+            for i, f in enumerate(order['files']):
+                if i not in used and f['name'] is not None:
+                    if i in context.user_data['temp_project_files']:
+                        kb.append([InlineKeyboardButton(f"✅ {context.user_data['temp_project_files'].index(i)+1}. {f['name']}", callback_data=f"proj_{i}")])
+                    else:
+                        kb.append([InlineKeyboardButton(f"⬜ {f['name']}", callback_data=f"proj_{i}")])
+            kb.append([InlineKeyboardButton("✅ Done", callback_data="proj_done")])
+            await q.edit_message_text(t(uid, 'choose_brochure', num=context.user_data['current_project_index']), reply_markup=InlineKeyboardMarkup(kb))
+            return SETUP_BROCHURE
+    except: return CONFIRM
+
+async def brochure_type_handler(update, context):
+    try:
+        q = update.callback_query
+        await q.answer()
+        uid = q.from_user.id
+        btype = 'Spring' if q.data == 'btype_spring' else 'String'
+        order = user_orders[uid][0]
+        order['projects'].append({'files': context.user_data['temp_project_files'], 'type': btype, 'copies': 1})
+        context.user_data['temp_project_files'] = []
+
+        if context.user_data['current_project_index'] < context.user_data['total_projects']:
+            context.user_data['current_project_index'] += 1
+            await q.edit_message_text("✅ Brochure done!")
+            await show_project_setup(update, context)
+            return SETUP_BROCHURE
+        else:
+            await q.edit_message_text("✅ All brochures done!")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=t(uid, 'fold_choice'), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Yes", callback_data="fold_y")], [InlineKeyboardButton("❌ No", callback_data="fold_n")]]))
+            return FOLDING
+    except: return CONFIRM
+
+# ==========================================
+# ВРЕМЯ, БЕЧЕВКА, ПОДТВЕРЖДЕНИЕ
+# ==========================================
+async def time_choice(update, context):
+    try:
+        q = update.callback_query
+        await q.answer()
+        uid = q.from_user.id
+        order = user_orders[uid][0]
+        time_map = {'time_1h': '1h', 'time_3h': '3h', 'time_day': 'Day', 'time_express': 'Express'}
+        order['ready_time'] = time_map[q.data]
+        total = 0
+        for f in order['files']:
+            if f['name'] is not None: total += f['print_price'] * f['copies']
+        if q.data == 'time_express': total = int(total * 1.3)
+        order['total_price'] = total
+        await q.edit_message_text(f"💰 Итог: {total} руб.")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="🧵 Сколько штук бечевки? (0 если не нужно):")
+        return STRING_COPIES
+    except: return CONFIRM
+
+async def string_copies_handler(update, context):
+    try:
+        uid = update.effective_user.id
+        txt = update.message.text.strip()
+        if not txt.isdigit():
+            await update.message.reply_text(t(uid, 'enter_number'))
+            return STRING_COPIES
+        strings = int(txt)
+        order = user_orders[uid][0]
+        order['string_copies'] = strings
+        order['string'] = strings > 0
+        order['string_price'] = 0
+
+        response = "📊 ОКОНЧАТЕЛЬНЫЙ РАСЧЕТ:\n"
+        for f in order['files']:
+            if f['name'] is not None:
+                response += f"📄 {f['name']} — {f['copies']} копий.\n"
+        response += f"💰 ИТОГО: {order['total_price']} руб.\n"
+        response += f"⏱ Готовность: {order['ready_time']}\n"
+        response += "\nГотовы заказать?"
+
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(uid, 'final_confirm'), callback_data="confirm_y")], [InlineKeyboardButton(t(uid, 'final_cancel'), callback_data="confirm_n")]])
+        await update.message.reply_text(response, reply_markup=kb)
+        return CONFIRM
+    except: return CONFIRM
+
+async def confirm_choice(update, context):
+    try:
+        q = update.callback_query
+        await q.answer()
+        uid = q.from_user.id
+        if q.data == "confirm_y":
+            await send_order_to_admin(update, context, uid, user_orders[uid][0])
+            return ConversationHandler.END
+        else:
+            if uid in user_orders:
+                for f in user_orders[uid][0]['files']:
+                    try:
+                        if f.get('path'): os.remove(f['path'])
+                    except: pass
+                del user_orders[uid]
+            await q.edit_message_text("❌ Заказ отменен. Нажмите /start")
+            return ConversationHandler.END
+    except: return ConversationHandler.END
+
+async def send_order_to_admin(update, context, uid, order):
+    try:
+        total = order['total_price']
+        admin_msg = f"🆕 НОВЫЙ ЗАКАЗ!\n👤 Клиент: {order['user_info']}\n🆔 ID: {uid}\n⏱ Готовность: {order['ready_time']}\n\n"
+        admin_msg += "🖨 ПЕЧАТЬ:\n"
+        for i, f in enumerate(order['files']):
+            if f['name'] is not None:
+                side = 'Односторонняя' if f['sided'] == 's' else 'Двусторонняя'
+                admin_msg += f"Файл #{i+1}: {f['name']} ({f['format']}, {side}, Цв:{f['color_pages']}, ЧБ:{f['bw_pages']}) - {f['copies']} копий.\n"
+
+        if order.get('projects'):
+            admin_msg += "\n📚 БРОШЮРЫ:\n"
+            for idx, p in enumerate(order['projects'], 1):
+                admin_msg += f"Брошюра #{idx} ({p['type']}):\n"
+                for fi in p['files']:
+                    f = order['files'][fi]
+                    admin_msg += f"  - {f['name']} ({f['format']})\n"
+
+        if order.get('folding', False) and order.get('folding_files'):
+            admin_msg += "\n📐 СКЛАДЫВАНИЕ:\n"
+            for fi in order['folding_files']:
+                f = order['files'][fi]
+                admin_msg += f"  - {f['name']} ({f['format']})\n"
+
+        admin_msg += f"\n💵 ИТОГО: {total} руб."
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Готов", callback_data=f"ready_{uid}")],
+            [InlineKeyboardButton("📦 Выдан", callback_data=f"issue_{uid}")],
+            [InlineKeyboardButton("❌ Отмена", callback_data=f"cancel_{uid}")]
+        ])
+        await context.bot.send_message(chat_id=ADMIN_ID, text=admin_msg, reply_markup=kb)
+
+        for f in order['files']:
+            if f.get('path') and os.path.exists(f['path']):
+                try:
+                    with open(f['path'], 'rb') as doc:
+                        await context.bot.send_document(chat_id=ADMIN_ID, document=doc, caption=f"📎 {f['name']}")
+                except: pass
+        await update.effective_message.reply_text(f"✅ ЗАКАЗ ПРИНЯТ! Сумма: {total} руб.")
+    except Exception as e:
+        logger.error(f"Ошибка отправки админу: {e}")
+    finally:
+        for f in order['files']:
+            try:
+                if f.get('path'): os.remove(f['path'])
+            except: pass
+
+# ==========================================
+# ОТЗЫВЫ, ОПЕРАТОР И АДМИН
+# ==========================================
+async def issue_client(update, context):
+    try:
+        q = update.callback_query
+        await q.answer()
+        if update.effective_user.id != ADMIN_ID:
+            await q.answer("Нет прав!", show_alert=True)
+            return
+        if not is_business_hours():
+            await q.answer("Выдача только с 9:00 до 20:00 (Пн-Пт)!", show_alert=True)
+            return
+        client_id = int(q.data.split('_')[1])
+        await context.bot.send_message(chat_id=client_id, text=t(client_id, 'feedback_ask'))
+        client_feedback_states[client_id] = {'state': 'waiting_rating', 'rating': None}
+        await q.edit_message_text(text=q.message.text + "\n\n✅ Клиент уведомлен о выдаче.")
+    except: pass
+
+async def feedback_rating_handler(update, context):
+    try:
+        uid = update.effective_user.id
+        if uid not in client_feedback_states or client_feedback_states[uid]['state'] != 'waiting_rating': return
+        if not update.message.text.strip().isdigit() or int(update.message.text) < 1 or int(update.message.text) > 10:
+            await update.message.reply_text("❌ Введите число от 1 до 10.")
+            return
+        client_feedback_states[uid] = {'state': 'waiting_comment', 'rating': int(update.message.text)}
+        await update.message.reply_text(t(uid, 'feedback_comment'))
+    except: pass
+
+async def feedback_comment_handler(update, context):
+    try:
+        uid = update.effective_user.id
+        if uid not in client_feedback_states or client_feedback_states[uid]['state'] != 'waiting_comment': return
+        comment = update.message.text.strip() if update.message.text.strip() else '-'
+        await context.bot.send_message(chat_id=ADMIN_ID, text=f"⭐ ОТЗЫВ ОТ {uid}:\nОценка: {client_feedback_states[uid]['rating']}/10\nКомментарий: {comment}")
+        await update.message.reply_text(t(uid, 'feedback_thanks'))
+        del client_feedback_states[uid]
+    except: pass
+
+async def unsupported_text(update, context):
+    try:
+        uid = update.effective_user.id
+        if uid in client_feedback_states: return ConversationHandler.END
+        if update.message.text.startswith('/'): return ConversationHandler.END
+
+        if uid in user_orders:
+            for f in user_orders[uid][0]['files']:
+                try:
+                    if f.get('path'): os.remove(f['path'])
+                except: pass
+            del user_orders[uid]
+
+        await update.message.reply_text("🤖 Я вас не понял. Нажмите /start, чтобы начать заказ заново.")
+        return ConversationHandler.END
+    except:
+        return ConversationHandler.END
+
+async def operator_choice(update, context):
+    try:
+        q = update.callback_query
+        await q.answer()
+        uid = q.from_user.id
+        if q.data == "op_y":
+            await q.edit_message_text("✅ Перевод на оператора.")
+            await context.bot.send_message(chat_id=ADMIN_ID, text=f"👤 Пользователь {uid} просит оператора.")
+            return WAIT_OPERATOR
+        else:
+            await q.edit_message_text("ОК! Отправьте PDF или /start")
+            return ConversationHandler.END
+    except: return ConversationHandler.END
+
+async def operator_chat(update, context):
+    try:
+        uid = update.effective_user.id
+        await context.bot.send_message(chat_id=ADMIN_ID, text=f"📩 {uid}: {update.message.text}")
+        await update.message.reply_text("✅ Отправлено оператору.")
+        return WAIT_OPERATOR
+    except: return WAIT_OPERATOR
+
+async def reply_to_client(update, context):
+    try:
+        if update.effective_user.id != ADMIN_ID:
+            await update.message.reply_text("❌ Нет прав.")
+            return
+        args = context.args
+        if len(args) < 2:
+            await update.message.reply_text("❌ Формат: /reply <ID> <текст>")
+            return
+        client_id = int(args[0])
+        reply_text = " ".join(args[1:])
+        await context.bot.send_message(chat_id=client_id, text=f"👨‍💻 {reply_text}")
+        await update.message.reply_text(f"✅ Отправлено клиенту {client_id}.")
+    except Exception as e:
+        logger.error(f"Ошибка reply: {e}")
+        await update.message.reply_text("❌ Ошибка!")
+
+async def notify_client(update, context):
+    try:
+        q = update.callback_query
+        await q.answer()
+        if q.from_user.id != ADMIN_ID:
+            await q.answer("Нет прав!", show_alert=True)
+            return
+        client_id = int(q.data.split('_')[1])
+        await context.bot.send_message(chat_id=client_id, text="🎉 ВАШ ЗАКАЗ ГОТОВ! Заберите его в печатке в УЛБ.")
+        await context.bot.send_message(chat_id=ADMIN_ID, text=f"✅ Клиент {client_id} уведомлен.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📦 Выдать", callback_data=f"issue_{client_id}")], [InlineKeyboardButton("❌ Отменить", callback_data=f"cancel_{client_id}")]]))
+    except: pass
+
+async def cancel(update, context):
+    try:
+        uid = update.effective_user.id
+        if uid in user_orders:
+            for f in user_orders[uid][0]['files']:
+                try:
+                    if f.get('path'): os.remove(f['path'])
+                except: pass
+            del user_orders[uid]
+        await update.message.reply_text("❌ Заказ отменен. Нажмите /start")
+        return ConversationHandler.END
+    except: return ConversationHandler.END
+
+async def test(update, context):
+    try:
+        if update.effective_user.id == ADMIN_ID:
+            await update.message.reply_text("✅ Бот работает!")
+        else:
+            await update.message.reply_text("❌ Нет прав.")
+    except: pass
+
+async def send_test(update, context):
+    try:
+        if update.effective_user.id == ADMIN_ID:
+            await context.bot.send_message(chat_id=ADMIN_ID, text="🧪 Тест!")
+            await update.message.reply_text("✅ Отправлено!")
+        else:
+            await update.message.reply_text("❌ Нет прав.")
+    except: pass
+
 # ==========================================
 # ЗАПУСК БОТА
 # ==========================================
 def run_bot():
     application = Application.builder().token(TOKEN).build()
     application.add_error_handler(error_handler)
-    
+
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -339,18 +954,18 @@ def run_bot():
         },
         fallbacks=[CommandHandler('cancel', cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, unsupported_text)]
     )
-    
+
     application.add_handler(conv_handler)
     
-    # ИСПРАВЛЕНИЕ: Глобальный обработчик документов. Теперь .docx и др. не уронят бота на любом этапе
+    # ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ДОКУМЕНТОВ (не уронит бота)
     application.add_handler(MessageHandler(filters.Document.ALL, ignore_document))
-    
+
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_rating_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_comment_handler))
     application.add_handler(CallbackQueryHandler(issue_client, pattern="^issue_"))
     application.add_handler(CallbackQueryHandler(notify_client, pattern="^ready_"))
     application.add_handler(CommandHandler('reply', reply_to_client))
-    
+
     print("🤖 Бот запущен!")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
