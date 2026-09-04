@@ -12,13 +12,13 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # !!! ВСТАВЬТЕ ВАШ НОВЫЙ ТОКЕН (после Revoke) !!!
-TOKEN = os.getenv("BOT_TOKEN", "8895041359:AAGWbfsxSWSLNC31SEihjAQSSVWbvdaYXsg")
+TOKEN = os.getenv("BOT_TOKEN", "ВАШ_НОВЫЙ_ТОКЕН_СЮДА")
 ADMIN_ID = 6592882382
 
 MAX_FILE_SIZE_MB = 50
 MIN_FILE_SIZE_KB = 10
 
-# Состояния (ИСПРАВЛЕНО: Теперь ровно 19, соответствует range(19))
+# Состояния (ИСПРАВЛЕНО: Ровно 19, соответствует range(19))
 (AUTH, WAIT_FILE, FORMAT, SIDED, ADD_FILE, FOLDING, FOLDING_SELECT, 
  READY_TIME, CONFIRM, WAIT_OPERATOR, PRINT_COPIES, STRING_COPIES, 
  PRINT_MODE, INPUT_PAGES, COLOR_MODE, INPUT_COLOR_PAGES, 
@@ -145,6 +145,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "https://smallpdf.com/ru/edit-pdf\n\n"
             "📄 **Если у вас нет PDF-файла**, его можно сконвертировать здесь:\n"
             "https://smallpdf.com/ru/pdf-converter\n\n"
+            "🎮 **Управление:**\n"
+            "• Отменить заказ: /cancel\n"
+            "• Начать заново: /start\n\n"
             "📝 Для начала авторизуйся:\n"
             "Напишите ФИО и ИКГ (например: Иванов Иван Иванович, ИКГ-01-20)"
         )
@@ -156,10 +159,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
+        # Сохраняем текст на любом языке (кириллица или латиница)
         user_orders[user_id][0]['user_info'] = update.message.text
         await update.message.reply_text("✅ Авторизация успешна!\nТеперь отправьте файл для печати (PDF):")
         return WAIT_FILE
     except Exception as e:
+        logger.error(f"Ошибка в auth: {e}")
         await update.message.reply_text("❌ Ошибка при авторизации. Нажмите /start заново.")
         return ConversationHandler.END
 
