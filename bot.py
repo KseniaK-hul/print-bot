@@ -3,7 +3,7 @@ import os
 import asyncio
 import threading
 import datetime
-import pymupdf
+import fitz  # ИСПРАВЛЕНО: теперь fitz вместо pymupdf
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
@@ -154,7 +154,7 @@ def is_business_hours():
 
 def analyze_pdf_colors(file_path):
     try:
-        doc = pymupdf.open(file_path)
+        doc = fitz.open(file_path)
         total = len(doc)
         color = 0
         bw = 0
@@ -162,7 +162,7 @@ def analyze_pdf_colors(file_path):
             has_color = False
             for img in p.get_images(full=True):
                 try:
-                    if pymupdf.Pixmap(doc, img[0]).n > 1: has_color = True; break
+                    if fitz.Pixmap(doc, img[0]).n > 1: has_color = True; break
                 except: continue
             if not has_color:
                 for block in p.get_text("dict").get("blocks", []):
@@ -852,7 +852,6 @@ async def reply_to_client(update, context):
             return
         client_id = int(args[0])
         reply_text = " ".join(args[1:])
-        # Отправляем текст как есть (русский, английский, что угодно)
         await context.bot.send_message(chat_id=client_id, text=f"👨‍💻 {reply_text}")
         await update.message.reply_text(f"✅ Отправлено клиенту {client_id}.")
     except Exception as e:
