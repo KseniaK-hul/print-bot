@@ -3,7 +3,7 @@ import os
 import asyncio
 import threading
 import datetime
-import fitz  # ИСПРАВЛЕНО: теперь fitz вместо pymupdf
+import fitz  # ИСПРАВЛЕНО: Библиотека называется fitz
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("BOT_TOKEN", "ВАШ_НОВЫЙ_ТОКЕН_СЮДА")
 ADMIN_ID = 6592882382
 
-MAX_FILE_SIZE_MB = 50
+MAX_FILE_SIZE_MB = 20  # РЕКОМЕНДАЦИЯ: Снизил размер, чтобы бот не терял память
 MIN_FILE_SIZE_KB = 10
 
 # ==========================================
@@ -198,10 +198,19 @@ async def error_handler(update, context):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
+
+        # ОЧИСТКА: Удаляем старый незаконченный заказ, чтобы не забивать память
+        if user_id in user_orders:
+            for f in user_orders[user_id][0]['files']:
+                try:
+                    if f.get('path'): os.remove(f['path'])
+                except: pass
+            del user_orders[user_id]
+
         if not is_business_hours():
             await update.message.reply_text(t(user_id, 'working_hours'))
             return ConversationHandler.END
-        
+
         user_orders[user_id] = [{'user_info': 'Unknown', 'files': [], 'projects': [], 'folding': False, 'folding_files': [], 'folding_price': 0, 'string': False, 'string_price': 0, 'string_copies': 0, 'ready_time': None, 'total_price': 0, 'is_express': False, 'express_fee': 0}]
         context.user_data['selected_folding'] = []
         context.user_data['copy_index'] = 0
@@ -224,7 +233,7 @@ async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_language[user_id] = LANG_EN
     else:
         user_language[user_id] = LANG_RU
-    
+
     await query.edit_message_text(t(user_id, 'greeting'))
     return AUTH
 
@@ -251,20 +260,20 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if doc.file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
             await update.message.reply_text(t(user_id, 'file_too_big'))
             return WAIT_FILE
-        
+
         file = await context.bot.get_file(doc.file_id)
         os.makedirs(f"temp_{user_id}", exist_ok=True)
         path = os.path.join(f"temp_{user_id}", f"{user_id}_{doc.file_id}.pdf")
         await file.download_to_drive(path)
-        
+
         total, color, bw = await asyncio.to_thread(analyze_pdf_colors, path)
         if total == 0:
             await update.message.reply_text(t(user_id, 'pdf_error'))
             if os.path.exists(path): os.remove(path)
             return WAIT_FILE
-            
+
         user_orders[user_id][0]['files'].append({'path': path, 'name': doc.file_name, 'total_pages': total, 'actual_color_pages': color, 'actual_bw_pages': bw, 'format': None, 'sided': None, 'print_price': 0, 'copies': 1, 'folding_copies': 1, 'selected_pages': None, 'color_pages': 0, 'bw_pages': 0})
-        
+
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(t(user_id, 'print_all'), callback_data="print_all")],
             [InlineKeyboardButton(t(user_id, 'print_specific'), callback_data="print_specific")]
@@ -316,7 +325,7 @@ async def input_pages_handler(update, context):
         except:
             await update.message.reply_text(t(uid, 'choose_pages', total=total))
             return INPUT_PAGES
-        
+
         f['selected_pages'] = sorted(list(set(pages)))
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(uid, 'color_all'), callback_data="color_all")], [InlineKeyboardButton(t(uid, 'bw_all'), callback_data="bw_all")], [InlineKeyboardButton(t(uid, 'color_specific'), callback_data="color_spec")]])
         await update.message.reply_text(t(uid, 'color_choice'), reply_markup=kb)
@@ -375,7 +384,7 @@ async def input_color_pages_handler(update, context):
         final_color = [p for p in color_pages if p in pages_to_print]
         f['color_pages'] = len(final_color)
         f['bw_pages'] = len(pages_to_print) - len(final_color)
-        
+
         await update.message.reply_text(t(uid, 'format_choice'), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("A4", callback_data="fmt_A4")], [InlineKeyboardButton("A3", callback_data="fmt_A3")], [InlineKeyboardButton("A2", callback_data="fmt_A2")], [InlineKeyboardButton("A1", callback_data="fmt_A1")], [InlineKeyboardButton("A0", callback_data="fmt_A0")]]))
         return FORMAT
     except: return INPUT_COLOR_PAGES
@@ -408,7 +417,7 @@ async def sided_choice(update, context):
         uid = q.from_user.id
         f = user_orders[uid][0]['files'][-1]
         f['sided'] = 's' if q.data == 'sided_s' else 'd'
-        
+
         total = 0
         if f['color_pages'] > 0: total += f['color_pages'] * PRICES_COLOR[f['format']]
         if f['bw_pages'] > 0: total += f['bw_pages'] * PRICES_BW[f['format']]
@@ -443,19 +452,19 @@ async def folding_choice(update, context):
         if q.data == "fold_y":
             order['folding'] = True
             context.user_data['selected_folding'] = []
-            
+
             broshure_files_idx = []
             for project in order.get('projects', []): broshure_files_idx.extend(project['files'])
-            
+
             kb = []
             for i, f in enumerate(order['files']):
                 if f['name'] is not None and f['format'] in ['A0', 'A1', 'A2', 'A3'] and i not in broshure_files_idx:
                     kb.append([InlineKeyboardButton(f"📄 {f['name']}", callback_data=f"fold_{i}")])
-            
+
             if not kb:
                 await q.edit_message_text("❌ Нет отдельных чертежей. Переходим дальше!")
                 return await show_final_order(update, context)
-            
+
             kb.append([InlineKeyboardButton("✅ Готово", callback_data="fold_done")])
             await q.edit_message_text(t(uid, 'fold_select'), reply_markup=InlineKeyboardMarkup(kb))
             return FOLDING_SELECT
@@ -507,10 +516,10 @@ async def show_final_order(update, context):
                 response += f"  📐 {f['format']} | {side}\n"
                 response += f"  🎨 Цветных: {f['color_pages']} | ЧБ: {f['bw_pages']}\n"
                 response += f"  💰 {f['print_price']} руб.\n"
-        
+
         if order.get('folding', False) and order.get('folding_files'):
             response += f"\n📐 Складывание: {order['folding_price']} руб.\n"
-        
+
         context.user_data['copy_index'] = 0
         first_name = order['files'][0]['name']
         msg = f"{response}\n\n" + t(uid, 'copies_header', name=first_name)
@@ -554,7 +563,7 @@ async def set_brochure_count_handler(update, context):
         count = int(txt)
         order = user_orders[uid][0]
         order['projects'] = []
-        
+
         if count == 0:
             await update.message.reply_text(t(uid, 'no_brochure'))
             await update.message.reply_text(t(uid, 'time_choice'), reply_markup=InlineKeyboardMarkup([
@@ -564,12 +573,12 @@ async def set_brochure_count_handler(update, context):
                 [InlineKeyboardButton("📅 День", callback_data="time_day")]
             ]))
             return READY_TIME
-        
+
         context.user_data['total_projects'] = count
         context.user_data['current_project_index'] = 1
         context.user_data['temp_project_files'] = []
         context.user_data['temp_project_type'] = None
-        
+
         await show_project_setup(update, context)
         return SETUP_BROCHURE
     except Exception as e:
@@ -583,7 +592,7 @@ async def show_project_setup(update, context):
         num = context.user_data['current_project_index']
         used = []
         for p in order['projects']: used.extend(p['files'])
-        
+
         avail = []
         for i, f in enumerate(order['files']):
             if i not in used and f['name'] is not None: avail.append(i)
@@ -591,7 +600,7 @@ async def show_project_setup(update, context):
             context.user_data['current_project_index'] = context.user_data['total_projects'] + 1
             await context.bot.send_message(chat_id=update.effective_chat.id, text=t(uid, 'fold_choice'), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Yes", callback_data="fold_y")], [InlineKeyboardButton("❌ No", callback_data="fold_n")]]))
             return FOLDING
-        
+
         kb = []
         for i in avail:
             if i in context.user_data['temp_project_files']:
@@ -644,7 +653,7 @@ async def brochure_type_handler(update, context):
         order = user_orders[uid][0]
         order['projects'].append({'files': context.user_data['temp_project_files'], 'type': btype, 'copies': 1})
         context.user_data['temp_project_files'] = []
-        
+
         if context.user_data['current_project_index'] < context.user_data['total_projects']:
             context.user_data['current_project_index'] += 1
             await q.edit_message_text("✅ Brochure done!")
@@ -697,7 +706,7 @@ async def string_copies_handler(update, context):
         response += f"💰 ИТОГО: {order['total_price']} руб.\n"
         response += f"⏱ Готовность: {order['ready_time']}\n"
         response += "\nГотовы заказать?"
-        
+
         kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(uid, 'final_confirm'), callback_data="confirm_y")], [InlineKeyboardButton(t(uid, 'final_cancel'), callback_data="confirm_n")]])
         await update.message.reply_text(response, reply_markup=kb)
         return CONFIRM
@@ -731,7 +740,7 @@ async def send_order_to_admin(update, context, uid, order):
             if f['name'] is not None:
                 side = 'Односторонняя' if f['sided'] == 's' else 'Двусторонняя'
                 admin_msg += f"Файл #{i+1}: {f['name']} ({f['format']}, {side}, Цв:{f['color_pages']}, ЧБ:{f['bw_pages']}) - {f['copies']} копий.\n"
-        
+
         if order.get('projects'):
             admin_msg += "\n📚 БРОШЮРЫ:\n"
             for idx, p in enumerate(order['projects'], 1):
@@ -739,7 +748,7 @@ async def send_order_to_admin(update, context, uid, order):
                 for fi in p['files']:
                     f = order['files'][fi]
                     admin_msg += f"  - {f['name']} ({f['format']})\n"
-        
+
         if order.get('folding', False) and order.get('folding_files'):
             admin_msg += "\n📐 СКЛАДЫВАНИЕ:\n"
             for fi in order['folding_files']:
@@ -753,7 +762,7 @@ async def send_order_to_admin(update, context, uid, order):
             [InlineKeyboardButton("❌ Отмена", callback_data=f"cancel_{uid}")]
         ])
         await context.bot.send_message(chat_id=ADMIN_ID, text=admin_msg, reply_markup=kb)
-        
+
         for f in order['files']:
             if f.get('path') and os.path.exists(f['path']):
                 try:
@@ -814,10 +823,19 @@ async def unsupported_text(update, context):
         uid = update.effective_user.id
         if uid in client_feedback_states: return ConversationHandler.END
         if update.message.text.startswith('/'): return ConversationHandler.END
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(uid, 'operator_yes'), callback_data="op_y")], [InlineKeyboardButton(t(uid, 'operator_no'), callback_data="op_n")]])
-        await update.message.reply_text(t(uid, 'operator_text'), reply_markup=kb)
-        return WAIT_OPERATOR
-    except: return ConversationHandler.END
+
+        # ОЧИСТКА: Если человек пишет непонятный текст, сбрасываем его незаконченный заказ
+        if uid in user_orders:
+            for f in user_orders[uid][0]['files']:
+                try:
+                    if f.get('path'): os.remove(f['path'])
+                except: pass
+            del user_orders[uid]
+
+        await update.message.reply_text("🤖 Я вас не понял. Нажмите /start, чтобы начать заказ заново.")
+        return ConversationHandler.END
+    except:
+        return ConversationHandler.END
 
 async def operator_choice(update, context):
     try:
@@ -906,7 +924,7 @@ async def send_test(update, context):
 def run_bot():
     application = Application.builder().token(TOKEN).build()
     application.add_error_handler(error_handler)
-    
+
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -932,14 +950,14 @@ def run_bot():
         },
         fallbacks=[CommandHandler('cancel', cancel), MessageHandler(filters.TEXT & ~filters.COMMAND, unsupported_text)]
     )
-    
+
     application.add_handler(conv_handler)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_rating_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_comment_handler))
     application.add_handler(CallbackQueryHandler(issue_client, pattern="^issue_"))
     application.add_handler(CallbackQueryHandler(notify_client, pattern="^ready_"))
     application.add_handler(CommandHandler('reply', reply_to_client))
-    
+
     print("🤖 Бот запущен!")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
